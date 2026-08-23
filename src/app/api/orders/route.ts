@@ -1216,7 +1216,99 @@ export async function GET() {
     }
 
     // ========================================================
-    // 4. RETURN ORDERS
+    // 4. ENRICH ORDERS WITH DELIVERY AGENT NAME
+    // ========================================================
+    //
+    // Orders store assigned_agent_id.
+    // Agent names are stored in profiles.full_name.
+    //
+    // We fetch the required profiles in one query instead of
+    // making one database request for every order.
+    //
+    // ========================================================
+
+    const assignedAgentIds = Array.from(
+      new Set(
+        (orders ?? [])
+          .map((order) => order.assigned_agent_id)
+          .filter(
+            (id): id is string =>
+              typeof id === "string" &&
+              id.trim().length > 0
+          )
+      )
+    );
+
+    let agentNameById = new Map<string, string>();
+
+    if (assignedAgentIds.length > 0) {
+      const {
+        data: agents,
+        error: agentsError,
+      } = await createAdminClient()
+        .from("profiles")
+        .select(
+          "id, full_name, role"
+        )
+        .in(
+          "id",
+          assignedAgentIds
+        )
+        .eq(
+          "role",
+          "delivery_agent"
+        );
+
+      if (agentsError) {
+        console.error(
+          "Delivery agent profile lookup error:",
+          agentsError
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Failed to load delivery agent information.",
+          },
+          {
+            status: 500,
+          }
+        );
+      }
+
+      agentNameById = new Map(
+        (agents ?? []).map(
+          (agent) => [
+            agent.id,
+            agent.full_name ||
+              "Unnamed Agent",
+          ]
+        )
+      );
+    }
+
+    const enrichedOrders =
+      (orders ?? []).map(
+        (order) => ({
+          ...order,
+
+          // Keep the original database field.
+          assigned_agent_id:
+            order.assigned_agent_id ?? null,
+
+          // Add a convenient display field for dashboards.
+          agent_name:
+            order.assigned_agent_id
+              ? agentNameById.get(
+                  order.assigned_agent_id
+                ) ?? "Unknown Agent"
+              : null,
+        })
+      );
+
+    // ========================================================
+    // 5. RETURN ORDERS
     // ========================================================
 
     return NextResponse.json(
@@ -1227,10 +1319,10 @@ export async function GET() {
           profile.role,
 
         count:
-          orders?.length ?? 0,
+          enrichedOrders.length,
 
         orders:
-          orders ?? [],
+          enrichedOrders,
       },
       {
         status: 200,
