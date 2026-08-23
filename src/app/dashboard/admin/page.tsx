@@ -1,9 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 type Order = Record<string, unknown>;
+
+
+const DeliveryMap = dynamic(
+  () => import("@/components/admin/DeliveryMap"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center bg-slate-100">
+        <span className="text-xs font-medium text-slate-500">
+          Loading delivery map...
+        </span>
+      </div>
+    ),
+  }
+);
+
 
 function stringValue(order: Order, ...keys: string[]) {
   for (const key of keys) {
@@ -587,65 +604,20 @@ export default function AdminDashboard() {
                   </span>
                 </div>
 
-                <div className="relative h-[360px] overflow-hidden bg-[#eaf0f4]">
-                  {/* MAP GRID */}
-                  <div
-                    className="absolute inset-0 opacity-40"
-                    style={{
-                      backgroundImage:
-                        "linear-gradient(90deg, rgba(100,116,139,.15) 1px, transparent 1px), linear-gradient(rgba(100,116,139,.15) 1px, transparent 1px)",
-                      backgroundSize: "48px 48px",
-                    }}
-                  />
+                <div className="relative h-[360px] overflow-hidden bg-slate-100">
+                  <DeliveryMap orders={orders} />
 
-                  {/* ROADS */}
-                  <div className="absolute left-[5%] top-[48%] h-[3px] w-[90%] rotate-[-12deg] bg-white shadow-sm" />
-                  <div className="absolute left-[20%] top-[5%] h-[3px] w-[80%] rotate-[34deg] bg-white shadow-sm" />
-                  <div className="absolute left-[48%] top-[0%] h-[100%] w-[4px] rotate-[12deg] bg-white shadow-sm" />
-                  <div className="absolute left-[10%] top-[65%] h-[3px] w-[85%] rotate-[22deg] bg-white shadow-sm" />
-                  <div className="absolute left-[4%] top-[25%] h-[3px] w-[75%] rotate-[8deg] bg-white shadow-sm" />
-
-                  {/* WATER */}
-                  <div className="absolute -right-20 top-[-50px] h-[520px] w-[180px] rotate-[18deg] rounded-[50%] bg-blue-100/70" />
-
-                  {/* DELIVERY MARKERS */}
-                  {[
-                    ["18%", "34%"],
-                    ["29%", "54%"],
-                    ["41%", "29%"],
-                    ["49%", "62%"],
-                    ["58%", "41%"],
-                    ["66%", "25%"],
-                    ["73%", "57%"],
-                    ["80%", "36%"],
-                    ["35%", "72%"],
-                    ["62%", "75%"],
-                    ["88%", "68%"],
-                  ].map(([left, top], index) => (
-                    <span
-                      key={`${left}-${top}`}
-                      className={`absolute h-3 w-3 rounded-full border-2 border-white shadow-md ${
-                        index % 5 === 0
-                          ? "bg-red-500"
-                          : "bg-blue-600"
-                      }`}
-                      style={{ left, top }}
-                    />
-                  ))}
-
-                  {/* MAP LABEL */}
-                  <div className="absolute left-4 top-4 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
+                  <div className="pointer-events-none absolute left-4 top-4 z-[1000] rounded-lg border border-slate-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur">
                     <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
                       Logistics Operations
                     </div>
 
                     <div className="mt-1 text-xs font-semibold text-slate-800">
-                      Active delivery network
+                      Live delivery network
                     </div>
                   </div>
 
-                  {/* LEGEND */}
-                  <div className="absolute bottom-4 left-4 rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm">
+                  <div className="pointer-events-none absolute bottom-4 left-4 z-[1000] rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm">
                     <div className="flex items-center gap-3 text-[10px] text-slate-600">
                       <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
                       Active delivery
@@ -657,8 +629,22 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <div className="absolute bottom-4 right-4 rounded-lg bg-white/95 px-3 py-2 text-[10px] font-semibold text-slate-600 shadow-sm">
-                    {statistics.activeDeliveries} active
+                  <div className="pointer-events-none absolute bottom-4 right-4 z-[1000] rounded-lg bg-white/95 px-3 py-2 text-[10px] font-semibold text-slate-600 shadow-sm">
+                    {orders.filter((order) => {
+                      const latitude = Number(
+                        order.delivery_latitude
+                      );
+
+                      const longitude = Number(
+                        order.delivery_longitude
+                      );
+
+                      return (
+                        Number.isFinite(latitude) &&
+                        Number.isFinite(longitude)
+                      );
+                    }).length}{" "}
+                    mapped
                   </div>
                 </div>
               </div>

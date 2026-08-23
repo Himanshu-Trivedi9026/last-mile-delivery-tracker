@@ -4,6 +4,116 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createOrderSchema } from "@/validations/order";
 
 // ============================================================
+// ADDRESS GEOCODING
+// ============================================================
+
+type Coordinates = {
+  latitude: number;
+  longitude: number;
+};
+
+async function geocodeAddress(
+  address: string
+): Promise<Coordinates> {
+  const query = address.trim();
+
+  if (!query) {
+    throw new Error("Address cannot be empty.");
+  }
+
+  // Known location alias:
+  // VIT Bhopal is geographically located in Sehore district.
+  if (
+    query
+      .toLowerCase()
+      .includes("vit bhopal university")
+  ) {
+    return {
+      latitude: 23.0755086,
+      longitude: 76.8497778,
+    };
+  }
+
+  const queries = [
+    query,
+    `${query}, India`,
+    `${query}, Madhya Pradesh, India`,
+    `${query}, Sehore, Madhya Pradesh, India`,
+  ];
+
+  let results: Array<{
+    lat?: string;
+    lon?: string;
+  }> = [];
+
+  for (const searchQuery of queries) {
+    const url =
+      "https://nominatim.openstreetmap.org/search" +
+      `?format=jsonv2` +
+      `&q=${encodeURIComponent(searchQuery)}` +
+      `&limit=1` +
+      `&countrycodes=in`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Last-Mile-Delivery-Tracker/1.0",
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        "Address geocoding service is unavailable."
+      );
+    }
+
+    const candidateResults =
+      (await response.json()) as Array<{
+        lat?: string;
+        lon?: string;
+      }>;
+
+    if (
+      Array.isArray(candidateResults) &&
+      candidateResults.length > 0
+    ) {
+      results = candidateResults;
+      break;
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 1100)
+    );
+  }
+
+  if (results.length === 0) {
+    throw new Error(
+      `Could not locate address: ${address}`
+    );
+  }
+
+  const latitude = Number(results[0].lat);
+  const longitude = Number(results[0].lon);
+
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
+  ) {
+    throw new Error(
+      `Invalid coordinates returned for address: ${address}`
+    );
+  }
+
+  return {
+    latitude,
+    longitude,
+  };
+}
+
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -604,6 +714,43 @@ export async function POST(
       createAdminClient();
 
     // ========================================================
+    // GEOCODE PICKUP AND DELIVERY ADDRESSES
+    // ========================================================
+
+    let pickupCoordinates: Coordinates;
+    let deliveryCoordinates: Coordinates;
+
+    try {
+      pickupCoordinates =
+        await geocodeAddress(pickupAddress);
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1100)
+      );
+
+      deliveryCoordinates =
+        await geocodeAddress(deliveryAddress);
+    } catch (geocodingError) {
+      console.error(
+        "Address geocoding error:",
+        geocodingError
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            geocodingError instanceof Error
+              ? geocodingError.message
+              : "Unable to locate one or more addresses.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    // ========================================================
     // 8. DETECT PICKUP ZONE
     // ========================================================
 
@@ -767,6 +914,22 @@ export async function POST(
 
           delivery_address:
             deliveryAddress,
+
+          // --------------------------------------------------
+          // Geographical coordinates
+          // --------------------------------------------------
+
+          pickup_latitude:
+            pickupCoordinates.latitude,
+
+          pickup_longitude:
+            pickupCoordinates.longitude,
+
+          delivery_latitude:
+            deliveryCoordinates.latitude,
+
+          delivery_longitude:
+            deliveryCoordinates.longitude,
 
           // --------------------------------------------------
           // Package
