@@ -52,9 +52,3 @@ Install dependencies:
 
 ```bash
 npm install
-Create `.env.local` from `.env.example` and configure the required environment variables.
-
-Run the development server:
-
-```bash
-npm run dev
