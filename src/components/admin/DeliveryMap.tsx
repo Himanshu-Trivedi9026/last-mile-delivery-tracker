@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -15,16 +15,25 @@ type DeliveryOrder = {
   id?: string;
   order_number?: string | null;
   status?: string | null;
+
   pickup_address?: string | null;
   delivery_address?: string | null;
+
   pickup_latitude?: number | string | null;
   pickup_longitude?: number | string | null;
+
   delivery_latitude?: number | string | null;
   delivery_longitude?: number | string | null;
 };
 
 type DeliveryMapProps = {
   orders: DeliveryOrder[];
+};
+
+type RouteData = {
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
 };
 
 function normalizeStatus(
@@ -34,6 +43,43 @@ function normalizeStatus(
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
+}
+
+function formatDistance(
+  meters: number
+) {
+  if (meters < 1000) {
+    return `${Math.round(meters)} m`;
+  }
+
+  return `${(
+    meters / 1000
+  ).toFixed(1)} km`;
+}
+
+function formatDuration(
+  seconds: number
+) {
+  const minutes = Math.round(
+    seconds / 60
+  );
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours = Math.floor(
+    minutes / 60
+  );
+
+  const remainingMinutes =
+    minutes % 60;
+
+  if (remainingMinutes === 0) {
+    return `${hours} hr`;
+  }
+
+  return `${hours} hr ${remainingMinutes} min`;
 }
 
 function FitMapToOrders({
@@ -105,34 +151,191 @@ function FitMapToOrders({
 export default function DeliveryMap({
   orders,
 }: DeliveryMapProps) {
-  const mappedOrders =
-    orders.filter((order) => {
-      const pickupLat = Number(
-        order.pickup_latitude
-      );
+  const mappedOrders = useMemo(
+    () =>
+      orders.filter((order) => {
+        const pickupLat = Number(
+          order.pickup_latitude
+        );
 
-      const pickupLng = Number(
-        order.pickup_longitude
-      );
+        const pickupLng = Number(
+          order.pickup_longitude
+        );
 
-      const deliveryLat = Number(
-        order.delivery_latitude
-      );
+        const deliveryLat = Number(
+          order.delivery_latitude
+        );
 
-      const deliveryLng = Number(
-        order.delivery_longitude
-      );
+        const deliveryLng = Number(
+          order.delivery_longitude
+        );
 
-      return (
-        Number.isFinite(pickupLat) &&
-        Number.isFinite(pickupLng) &&
-        Number.isFinite(deliveryLat) &&
-        Number.isFinite(deliveryLng)
-      );
-    });
+        return (
+          Number.isFinite(pickupLat) &&
+          Number.isFinite(pickupLng) &&
+          Number.isFinite(deliveryLat) &&
+          Number.isFinite(deliveryLng)
+        );
+      }),
+    [orders]
+  );
+
+  const [routes, setRoutes] =
+    useState<
+      Record<string, RouteData>
+    >({});
+
+  const [routeErrors, setRouteErrors] =
+    useState<Record<string, string>>(
+      {}
+    );
+
+  const [routing, setRouting] =
+    useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRoutes() {
+      if (mappedOrders.length === 0) {
+        setRoutes({});
+        setRouteErrors({});
+        setRouting(false);
+        return;
+      }
+
+      setRouting(true);
+
+      const results =
+        await Promise.all(
+          mappedOrders.map(
+            async (order, index) => {
+              const key =
+                order.id ??
+                order.order_number ??
+                `route-${index}`;
+
+              const pickupLat =
+                Number(
+                  order.pickup_latitude
+                );
+
+              const pickupLng =
+                Number(
+                  order.pickup_longitude
+                );
+
+              const deliveryLat =
+                Number(
+                  order.delivery_latitude
+                );
+
+              const deliveryLng =
+                Number(
+                  order.delivery_longitude
+                );
+
+              try {
+                const response =
+                  await fetch(
+                    "/api/routes",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type":
+                          "application/json",
+                      },
+                      body: JSON.stringify({
+                        start: {
+                          lat: pickupLat,
+                          lng: pickupLng,
+                        },
+                        end: {
+                          lat: deliveryLat,
+                          lng: deliveryLng,
+                        },
+                      }),
+                    }
+                  );
+
+                const data =
+                  await response.json();
+
+                if (
+                  !response.ok ||
+                  !data.success ||
+                  !data.route
+                ) {
+                  return {
+                    key,
+                    route: null,
+                    error:
+                      data.error ??
+                      "Could not calculate route.",
+                  };
+                }
+
+                return {
+                  key,
+                  route:
+                    data.route as RouteData,
+                  error: null,
+                };
+              } catch (error) {
+                console.error(
+                  `Route request failed for ${key}:`,
+                  error
+                );
+
+                return {
+                  key,
+                  route: null,
+                  error:
+                    "Route service unavailable.",
+                };
+              }
+            }
+          )
+        );
+
+      if (cancelled) {
+        return;
+      }
+
+      const nextRoutes: Record<
+        string,
+        RouteData
+      > = {};
+
+      const nextErrors: Record<
+        string,
+        string
+      > = {};
+
+      for (const result of results) {
+        if (result.route) {
+          nextRoutes[result.key] =
+            result.route;
+        } else if (result.error) {
+          nextErrors[result.key] =
+            result.error;
+        }
+      }
+
+      setRoutes(nextRoutes);
+      setRouteErrors(nextErrors);
+      setRouting(false);
+    }
+
+    loadRoutes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mappedOrders]);
 
   return (
-    <div className="h-full w-full">
+    <div className="relative h-full w-full">
       <MapContainer
         center={[
           23.2584857,
@@ -185,11 +388,20 @@ export default function DeliveryMap({
             const orderKey =
               order.id ??
               order.order_number ??
-              `${pickupLatitude}-${pickupLongitude}-${deliveryLatitude}-${deliveryLongitude}-${index}`;
+              `route-${index}`;
+
+            const route =
+              routes[orderKey];
+
+            const routeError =
+              routeErrors[orderKey];
 
             return (
               <span key={orderKey}>
-                {/* PICKUP MARKER */}
+                {/* ==========================================
+                    PICKUP MARKER
+                ========================================== */}
+
                 <CircleMarker
                   center={[
                     pickupLatitude,
@@ -204,7 +416,7 @@ export default function DeliveryMap({
                   }}
                 >
                   <Popup>
-                    <div className="min-w-[180px]">
+                    <div className="min-w-[190px]">
                       <p className="text-xs font-bold text-slate-900">
                         {order.order_number ??
                           "Pickup"}
@@ -235,27 +447,76 @@ export default function DeliveryMap({
                   </Popup>
                 </CircleMarker>
 
-                {/* ROUTE */}
-                <Polyline
-                  positions={[
-                    [
-                      pickupLatitude,
-                      pickupLongitude,
-                    ],
-                    [
-                      deliveryLatitude,
-                      deliveryLongitude,
-                    ],
-                  ]}
-                  pathOptions={{
-                    color: "#475569",
-                    weight: 3,
-                    opacity: 0.75,
-                    dashArray: "8 8",
-                  }}
-                />
+                {/* ==========================================
+                    ACTUAL ROAD ROUTE
+                ========================================== */}
 
-                {/* DELIVERY MARKER */}
+                {route ? (
+                  <Polyline
+                    positions={
+                      route.coordinates
+                    }
+                    pathOptions={{
+                      color:
+                        attentionRequired
+                          ? "#ef4444"
+                          : "#2563eb",
+                      weight: 4,
+                      opacity: 0.85,
+                    }}
+                  >
+                    <Popup>
+                      <div className="min-w-[190px]">
+                        <p className="text-xs font-bold text-slate-900">
+                          {order.order_number ??
+                            "Delivery route"}
+                        </p>
+
+                        <p className="mt-2 text-[10px] font-semibold text-blue-700">
+                          Road route
+                        </p>
+
+                        <p className="mt-1 text-[11px] text-slate-600">
+                          Distance:{" "}
+                          {formatDistance(
+                            route.distanceMeters
+                          )}
+                        </p>
+
+                        <p className="mt-1 text-[11px] text-slate-600">
+                          Estimated time:{" "}
+                          {formatDuration(
+                            route.durationSeconds
+                          )}
+                        </p>
+                      </div>
+                    </Popup>
+                  </Polyline>
+                ) : (
+                  <Polyline
+                    positions={[
+                      [
+                        pickupLatitude,
+                        pickupLongitude,
+                      ],
+                      [
+                        deliveryLatitude,
+                        deliveryLongitude,
+                      ],
+                    ]}
+                    pathOptions={{
+                      color: "#94a3b8",
+                      weight: 3,
+                      opacity: 0.65,
+                      dashArray: "8 8",
+                    }}
+                  />
+                )}
+
+                {/* ==========================================
+                    DELIVERY MARKER
+                ========================================== */}
+
                 <CircleMarker
                   center={[
                     deliveryLatitude,
@@ -273,7 +534,7 @@ export default function DeliveryMap({
                   }}
                 >
                   <Popup>
-                    <div className="min-w-[180px]">
+                    <div className="min-w-[200px]">
                       <p className="text-xs font-bold text-slate-900">
                         {order.order_number ??
                           "Delivery"}
@@ -301,6 +562,34 @@ export default function DeliveryMap({
                         </p>
                       )}
 
+                      {route && (
+                        <>
+                          <p className="mt-2 text-[10px] font-semibold text-slate-700">
+                            Route information
+                          </p>
+
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Distance:{" "}
+                            {formatDistance(
+                              route.distanceMeters
+                            )}
+                          </p>
+
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Estimated time:{" "}
+                            {formatDuration(
+                              route.durationSeconds
+                            )}
+                          </p>
+                        </>
+                      )}
+
+                      {routeError && (
+                        <p className="mt-2 text-[10px] text-amber-600">
+                          {routeError}
+                        </p>
+                      )}
+
                       <p className="mt-2 text-[10px] text-slate-400">
                         {deliveryLatitude.toFixed(
                           5
@@ -318,6 +607,32 @@ export default function DeliveryMap({
           }
         )}
       </MapContainer>
+
+      {/* ================================================
+          ROUTING STATUS
+      ================================================ */}
+
+      {routing && (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-[1000] -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[10px] font-semibold text-slate-600 shadow-sm backdrop-blur">
+          Calculating road routes...
+        </div>
+      )}
+
+      {!routing &&
+        mappedOrders.length > 0 &&
+        Object.keys(routes).length > 0 && (
+          <div className="pointer-events-none absolute right-4 top-4 z-[1000] rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[10px] font-semibold text-slate-600 shadow-sm backdrop-blur">
+            {Object.keys(routes).length} road routes
+          </div>
+        )}
+
+      {!routing &&
+        mappedOrders.length > 0 &&
+        Object.keys(routes).length === 0 && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-[1000] -translate-x-1/2 rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-[10px] font-semibold text-amber-700 shadow-sm backdrop-blur">
+            Road routes unavailable
+          </div>
+        )}
     </div>
   );
 }
