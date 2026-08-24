@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+
+const LiveAgentTrackingMap = dynamic(
+  () => import("@/components/LiveAgentTrackingMap"),
+  { ssr: false }
+);
 
 type TrackingEvent = {
   id: string;
@@ -11,6 +17,15 @@ type TrackingEvent = {
   location: string | null;
   updated_by: string | null;
   created_at: string;
+};
+
+
+type LiveAgentLocation = {
+  id: string;
+  full_name: string | null;
+  current_latitude: number | null;
+  current_longitude: number | null;
+  updated_at: string | null;
 };
 
 type Order = {
@@ -26,6 +41,10 @@ type Order = {
   delivery_fee: number;
   cod_surcharge: number;
   status: string;
+
+  delivery_latitude: number | null;
+  delivery_longitude: number | null;
+
   expected_delivery_date: string | null;
   created_at: string;
 };
@@ -103,7 +122,11 @@ export default function TrackingPage() {
     : params.orderId;
 
   const [order, setOrder] = useState<Order | null>(null);
-  const [events, setEvents] = useState<TrackingEvent[]>([]);
+  const [events, setEvents] =
+    useState<TrackingEvent[]>([]);
+
+  const [liveAgentLocation, setLiveAgentLocation] =
+    useState<LiveAgentLocation | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -176,6 +199,9 @@ export default function TrackingPage() {
 
         setOrder(orderData.order);
         setEvents(trackingData.events || []);
+        setLiveAgentLocation(
+          trackingData.liveAgentLocation || null
+        );
       } catch (err) {
         console.error(
           "Tracking page loading error:",
@@ -193,6 +219,15 @@ export default function TrackingPage() {
     }
 
     loadTracking();
+
+    const intervalId = window.setInterval(
+      loadTracking,
+      10_000
+    );
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [orderId, router]);
 
   // ============================================================
@@ -709,6 +744,25 @@ export default function TrackingPage() {
 
           </div>
 
+        </section>
+
+        {/* ====================================================
+            LIVE AGENT TRACKING
+        ==================================================== */}
+
+        <section className="mb-6">
+          <LiveAgentTrackingMap
+            agent={liveAgentLocation}
+            destinationLatitude={
+              order.delivery_latitude
+            }
+            destinationLongitude={
+              order.delivery_longitude
+            }
+            destinationAddress={
+              order.delivery_address
+            }
+          />
         </section>
 
         {/* ====================================================

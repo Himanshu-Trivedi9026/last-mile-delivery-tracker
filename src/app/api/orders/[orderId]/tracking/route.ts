@@ -380,6 +380,9 @@ export async function GET(
     const supabase =
       await createClient();
 
+    const adminSupabase =
+      createAdminClient();
+
     // --------------------------------------------------------
     // 1. Authentication
     // --------------------------------------------------------
@@ -416,6 +419,8 @@ export async function GET(
           assigned_agent_id,
           pickup_address,
           delivery_address,
+          delivery_latitude,
+          delivery_longitude,
           rescheduled_date,
           delivery_attempt,
           failure_reason,
@@ -500,6 +505,56 @@ export async function GET(
     }
 
     // --------------------------------------------------------
+    // 5. Retrieve live delivery agent location
+    // --------------------------------------------------------
+
+    let liveAgentLocation: {
+      id: string;
+      full_name: string | null;
+      current_latitude: number | null;
+      current_longitude: number | null;
+      updated_at: string | null;
+    } | null = null;
+
+    if (order.assigned_agent_id) {
+      const {
+        data: agentProfile,
+        error: agentProfileError,
+      } = await adminSupabase
+        .from("profiles")
+        .select(
+          `
+            id,
+            full_name,
+            current_latitude,
+            current_longitude,
+            updated_at
+          `
+        )
+        .eq("id", order.assigned_agent_id)
+        .eq("role", "delivery_agent")
+        .maybeSingle();
+
+      if (agentProfileError) {
+        console.error(
+          "Live agent location lookup error:",
+          agentProfileError
+        );
+      } else if (agentProfile) {
+        liveAgentLocation = {
+          id: agentProfile.id,
+          full_name: agentProfile.full_name,
+          current_latitude:
+            agentProfile.current_latitude,
+          current_longitude:
+            agentProfile.current_longitude,
+          updated_at:
+            agentProfile.updated_at,
+        };
+      }
+    }
+
+    // --------------------------------------------------------
     // 5. Retrieve tracking events
     // --------------------------------------------------------
 
@@ -554,6 +609,7 @@ export async function GET(
         count: events?.length ?? 0,
         order,
         events: events ?? [],
+        liveAgentLocation,
       },
       { status: 200 }
     );
@@ -680,6 +736,9 @@ export async function POST(
 
     const supabase =
       await createClient();
+
+    const adminSupabase =
+      createAdminClient();
 
     const {
       data: { user },
@@ -1182,8 +1241,7 @@ export async function POST(
     // The service-role client is NEVER exposed to the browser.
     // ========================================================
 
-    const adminSupabase =
-      createAdminClient();
+
 
     // ========================================================
     // 11. DUPLICATE TRACKING PROTECTION

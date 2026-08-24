@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import dynamic from "next/dynamic";
+
+const LiveAgentTrackingMap = dynamic(
+  () => import("@/components/LiveAgentTrackingMap"),
+  { ssr: false }
+);
 
 type TrackingEvent = {
   id: string;
@@ -14,6 +20,14 @@ type TrackingEvent = {
   created_at: string;
 };
 
+type LiveAgentLocation = {
+  id: string;
+  full_name: string | null;
+  current_latitude: number | null;
+  current_longitude: number | null;
+  updated_at: string | null;
+};
+
 type TrackingResponse = {
   success: boolean;
   orderId?: string;
@@ -21,6 +35,13 @@ type TrackingResponse = {
   count?: number;
   events?: TrackingEvent[];
   error?: string;
+  order?: {
+    id: string;
+    delivery_latitude?: number | null;
+    delivery_longitude?: number | null;
+    delivery_address?: string | null;
+  };
+  liveAgentLocation?: LiveAgentLocation | null;
 };
 
 const STATUS_FLOW = [
@@ -107,6 +128,15 @@ export default function AdminOrderTrackingPage() {
 
   useEffect(() => {
     loadTracking();
+
+    const intervalId = window.setInterval(
+      loadTracking,
+      10_000
+    );
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [orderId]);
 
   const currentStatus = (
@@ -228,6 +258,27 @@ export default function AdminOrderTrackingPage() {
                   </p>
                 </div>
               </div>
+            </section>
+
+            {/* ==================================================
+                LIVE AGENT TRACKING
+            ================================================== */}
+
+            <section className="mt-6">
+              <LiveAgentTrackingMap
+                agent={
+                  tracking.liveAgentLocation ?? null
+                }
+                destinationLatitude={
+                  tracking.order?.delivery_latitude ?? null
+                }
+                destinationLongitude={
+                  tracking.order?.delivery_longitude ?? null
+                }
+                destinationAddress={
+                  tracking.order?.delivery_address ?? null
+                }
+              />
             </section>
 
             {/* Timeline */}
