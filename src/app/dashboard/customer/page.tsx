@@ -360,7 +360,7 @@ export default function CustomerDashboard() {
 
           <button
             type="button"
-            onClick={() => router.push("/dashboard/customer/orders/create")}
+            onClick={() => router.push("/dashboard/customer")}
             className="flex w-full items-center gap-4 px-6 py-3 text-left text-[#45464d] transition hover:bg-[#e5eeff]"
           >
             <span className="text-lg">
