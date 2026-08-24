@@ -609,20 +609,17 @@ These endpoints provide delivery-agent information and assigned-order informatio
 Zones
 GET /api/admin/zones
 POST /api/admin/zones
-GET /api/admin/zones/[zoneId]
-PUT /api/admin/zones/[zoneId]
-DELETE /api/admin/zones/[zoneId]
+PATCH /api/admin/zones/[zoneId]
 
-These endpoints manage delivery zones and their configuration.
+These endpoints allow administrators to list, create, and update delivery zones.
 
 Rate Cards
 GET /api/admin/rate-cards
 POST /api/admin/rate-cards
-GET /api/admin/rate-cards/[rateCardId]
-PUT /api/admin/rate-cards/[rateCardId]
+PATCH /api/admin/rate-cards/[rateCardId]
 DELETE /api/admin/rate-cards/[rateCardId]
 
-These endpoints manage configurable delivery rates.
+These endpoints allow administrators to create, update, delete, and manage configurable delivery rates.
 
 22. Delivery Agent API
 Update Agent Location
