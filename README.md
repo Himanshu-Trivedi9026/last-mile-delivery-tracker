@@ -772,17 +772,43 @@ The final deployed application URL should be provided with the submission.
 
 4. System Design Write-up
 
-A separate system-design document should cover:
+The Last-Mile Delivery Tracker is designed as a role-based delivery management platform using Next.js API routes, a PostgreSQL database through Supabase, and separate customer, delivery-agent, and administrator workflows.
 
-Rate calculation engine
-Zone detection
-Automatic agent assignment
-Agent availability
-Failed delivery handling
-Rescheduling
-Agent reassignment
+### Rate Calculation Engine
 
-The system-design write-up must remain within the assignment's 800-word limit.
+The rate calculation engine performs all pricing calculations on the server side using administrator-configured rate cards. When an order is created, the system first determines the pickup and delivery zones from the configured delivery areas. It then calculates volumetric weight using:
+
+Volumetric Weight = (Length × Breadth × Height) / 5000
+
+The chargeable weight is the greater of actual weight and volumetric weight:
+
+Chargeable Weight = MAX(Actual Weight, Volumetric Weight)
+
+The system determines whether the shipment is intra-zone or inter-zone and selects the corresponding rate card for the order type, either B2B or B2C. The delivery charge is calculated from the configured base rate and per-kilogram rate. For COD orders, the configured COD surcharge is added. Because the values are stored in the database as rate cards, administrators can modify pricing without changing application code.
+
+### Zone Detection
+
+Delivery areas are mapped to delivery zones by administrators. During order creation, the system loads the configured areas and compares their names against the normalized pickup and delivery addresses. When multiple areas match, the longest matching area is selected so that a more specific locality takes precedence over a generic one. The selected area's zone determines the pickup or delivery zone used for pricing and agent assignment.
+
+### Automatic Agent Assignment
+
+The assignment system considers delivery-agent availability and location. Available agents are loaded from the profiles table using the delivery-agent role and availability flag. When the order contains a delivery destination with valid GPS coordinates, the system calculates the geographical distance between the destination and each available agent using the Haversine formula. The nearest agent is selected.
+
+If GPS information cannot be used, the system first prefers an available agent belonging to the delivery zone. If no same-zone agent is available, it falls back to another available agent. Administrators can also manually assign an agent. Agent location updates are stored through the agent-location API and can therefore improve future GPS-based assignment decisions.
+
+### Delivery Status and Immutable Tracking
+
+Delivery progress follows a controlled lifecycle beginning with assignment and continuing through pickup, transit, out-for-delivery, and delivery completion. Status transitions are validated by the backend so that statuses cannot move backwards or skip required stages. Each successful status change creates a separate tracking event containing the order, status, description, location information, timestamp, and actor. This provides an auditable tracking timeline rather than overwriting historical delivery information.
+
+### Failed Delivery and Rescheduling
+
+A delivery can be marked as failed only after it has entered an eligible delivery stage, and a failure reason is required. The order stores the failure reason and failure timestamp while the tracking event records the failed status.
+
+After a failed delivery, the customer can request a new delivery date. The system validates that the date is not in the past, increments the delivery attempt number, clears the previous failure information, and searches for another available delivery agent. The previous agent is excluded when possible. If another agent is available, the order is reassigned automatically; otherwise, it remains available for administrative assignment. The rescheduled order then restarts the normal delivery workflow from the pickup stage.
+
+### Customer Notifications
+
+After a successful tracking update, the system attempts to notify the customer through email and SMS. Notification failures are intentionally non-blocking: a communication-provider failure does not undo a successfully recorded delivery-status update. This keeps the tracking database authoritative while still providing reliable customer communication.
 
 28. Repository Submission Checklist
 
