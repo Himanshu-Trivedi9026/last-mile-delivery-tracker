@@ -605,14 +605,14 @@ export async function POST(
     // ========================================================
 
     if (
-      profile.role !==
-      "customer"
+      profile.role !== "customer" &&
+      profile.role !== "admin"
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Only customers can create orders.",
+            "Only customers or administrators can create orders.",
         },
         {
           status: 403,
@@ -694,6 +694,73 @@ export async function POST(
       expectedDeliveryDate,
     } =
       validationResult.data;
+
+    // ========================================================
+    // ADMIN ORDER CREATION
+    // ========================================================
+    //
+    // Customers create orders for themselves.
+    // Administrators may create orders on behalf of a customer.
+    // ========================================================
+
+    let orderCustomerId = user.id;
+
+    if (profile.role === "admin") {
+      const rawBody =
+        typeof body === "object" &&
+        body !== null
+          ? body as Record<string, unknown>
+          : {};
+
+      const requestedCustomerId =
+        typeof rawBody.customerId === "string"
+          ? rawBody.customerId.trim()
+          : typeof rawBody.customer_id === "string"
+            ? rawBody.customer_id.trim()
+            : "";
+
+      if (!requestedCustomerId) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "customerId is required when an administrator creates an order.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      const {
+        data: customerProfile,
+        error: customerProfileError,
+      } = await supabase
+        .from("profiles")
+        .select("id, role")
+        .eq("id", requestedCustomerId)
+        .single();
+
+      if (
+        customerProfileError ||
+        !customerProfile ||
+        customerProfile.role !== "customer"
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "The selected customer does not exist.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      orderCustomerId =
+        requestedCustomerId;
+    }
 
     // ========================================================
     // 7. SERVER-SIDE ADMIN CLIENT
@@ -903,7 +970,7 @@ export async function POST(
             orderNumber,
 
           customer_id:
-            user.id,
+            orderCustomerId,
 
           // --------------------------------------------------
           // Addresses
