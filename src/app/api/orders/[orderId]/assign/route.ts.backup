@@ -167,29 +167,27 @@ async function findNearestAvailableAgent(
   ) {
     const agentsWithGps = agents
       .filter(
-        (agent) =>
-          agent.current_latitude !== null &&
-          agent.current_longitude !== null &&
+        (
+          agent
+        ): agent is Agent =>
+          typeof agent.current_latitude ===
+            "number" &&
           Number.isFinite(
             agent.current_latitude
           ) &&
+          typeof agent.current_longitude ===
+            "number" &&
           Number.isFinite(
             agent.current_longitude
           )
       )
       .map((agent) => {
-        const agentLatitude =
-          agent.current_latitude as number;
-
-        const agentLongitude =
-          agent.current_longitude as number;
-
         const distanceKm =
           calculateDistanceKm(
             deliveryLatitude,
             deliveryLongitude,
-            agentLatitude,
-            agentLongitude
+            agent.current_latitude,
+            agent.current_longitude
           );
 
         return {

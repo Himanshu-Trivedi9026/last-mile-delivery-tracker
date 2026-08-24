@@ -43,6 +43,34 @@ export const createTrackingEventSchema = z.object({
     .optional(),
 
   /**
+   * GPS latitude captured from the delivery agent's device.
+   *
+   * Valid range:
+   * -90 to 90
+   */
+  latitude: z
+    .number()
+    .min(-90, "Latitude must be between -90 and 90")
+    .max(90, "Latitude must be between -90 and 90")
+    .finite()
+    .optional()
+    .nullable(),
+
+  /**
+   * GPS longitude captured from the delivery agent's device.
+   *
+   * Valid range:
+   * -180 to 180
+   */
+  longitude: z
+    .number()
+    .min(-180, "Longitude must be between -180 and 180")
+    .max(180, "Longitude must be between -180 and 180")
+    .finite()
+    .optional()
+    .nullable(),
+
+  /**
    * Required when an order is being rescheduled.
    *
    * Format:

@@ -2,6 +2,42 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+
+type GPSCoordinates = {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+};
+
+function getCurrentGPSPosition(): Promise<GPSCoordinates | null> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !("geolocation" in navigator)) {
+      resolve(null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+      },
+      (error) => {
+        console.warn("GPS location unavailable:", error.message);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  });
+}
+
+
 type Order = {
   id: string;
   order_number: string;
@@ -607,6 +643,11 @@ export default function AgentDashboard() {
       setStatusMessage("");
       setStatusError("");
 
+      // Capture the agent's current GPS position at the moment
+      // the delivery status is updated. If location permission is
+      // denied/unavailable, the status update still proceeds.
+      const gps = await getCurrentGPSPosition();
+
       const response = await fetch(
         `/api/orders/${order.id}/tracking`,
         {
@@ -624,6 +665,8 @@ export default function AgentDashboard() {
                 order,
                 newStatus
               ),
+            latitude: gps?.latitude ?? null,
+            longitude: gps?.longitude ?? null,
           }),
         }
       );

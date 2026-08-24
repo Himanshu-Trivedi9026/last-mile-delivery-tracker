@@ -3,6 +3,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
+
+type GPSCoordinates = {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+};
+
+function getCurrentGPSPosition(): Promise<GPSCoordinates | null> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !("geolocation" in navigator)) {
+      resolve(null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+      },
+      (error) => {
+        console.warn("GPS location unavailable:", error.message);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  });
+}
+
+
 type Order = {
   id: string;
   order_number: string;
@@ -35,6 +71,8 @@ type TrackingEvent = {
   status: string;
   description: string | null;
   location: string | null;
+  latitude: number | null;
+  longitude: number | null;
   updated_by: string;
   created_at: string;
 };
@@ -353,6 +391,10 @@ export default function AgentOrderDetailsPage() {
         return;
       }
 
+      // Capture the delivery agent's current GPS position
+      // when the tracking event is created.
+      const gps = await getCurrentGPSPosition();
+
       const response = await fetch(
         `/api/orders/${orderId}/tracking`,
         {
@@ -372,6 +414,8 @@ export default function AgentOrderDetailsPage() {
               location.trim() ||
               STATUS_LOCATIONS[normalizedStatus] ||
               "",
+            latitude: gps?.latitude ?? null,
+            longitude: gps?.longitude ?? null,
           }),
         }
       );
@@ -1061,6 +1105,21 @@ export default function AgentOrderDetailsPage() {
                           📍 {event.location}
                         </p>
                       )}
+
+                      {event.latitude !== null &&
+                        event.latitude !== undefined &&
+                        event.longitude !== null &&
+                        event.longitude !== undefined && (
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${event.latitude},${event.longitude}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                          >
+                            🛰️ GPS: {event.latitude.toFixed(6)},{" "}
+                            {event.longitude.toFixed(6)}
+                          </a>
+                        )}
 
                     </div>
                   </div>

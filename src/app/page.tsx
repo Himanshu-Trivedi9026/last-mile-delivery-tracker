@@ -8,17 +8,194 @@ type Role = "admin" | "agent" | "customer";
 export default function Home() {
   const router = useRouter();
 
-  const [role, setRole] = useState<Role>("admin");
+  const [role, setRole] =
+    useState<Role>("admin");
+
+  const [isRegistering, setIsRegistering] =
+    useState(false);
+
+  // Login fields
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] =
+    useState("");
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  // Registration fields
+  const [fullName, setFullName] =
+    useState("");
+  const [phone, setPhone] =
+    useState("");
+  const [confirmPassword, setConfirmPassword] =
+    useState("");
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  const [remember, setRemember] =
+    useState(false);
+
+  const [showPassword, setShowPassword] =
+    useState(false);
+
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [success, setSuccess] =
+    useState("");
+
+  // ============================================================
+  // ROLE CHANGE
+  // ============================================================
+
+  function handleRoleChange(
+    newRole: Role
+  ) {
+    setRole(newRole);
+
+    setError("");
+    setSuccess("");
+
+    // Registration is available only for customers.
+    if (newRole !== "customer") {
+      setIsRegistering(false);
+    }
+  }
+
+  // ============================================================
+  // CUSTOMER REGISTRATION
+  // ============================================================
+
+  async function handleRegister(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    // ----------------------------------------------------------
+    // Client-side validation
+    // ----------------------------------------------------------
+
+    if (!fullName.trim()) {
+      setError(
+        "Full name is required."
+      );
+      return;
+    }
+
+    if (!email.trim()) {
+      setError(
+        "Email address is required."
+      );
+      return;
+    }
+
+    if (!phone.trim()) {
+      setError(
+        "Phone number is required."
+      );
+      return;
+    }
+
+    if (!password) {
+      setError(
+        "Password is required."
+      );
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError(
+        "Passwords do not match."
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response =
+        await fetch(
+          "/api/auth/register",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              fullName:
+                fullName.trim(),
+
+              email:
+                email.trim(),
+
+              password,
+
+              phone:
+                phone.trim(),
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        setError(
+          data.error ||
+            "Unable to create customer account."
+        );
+
+        return;
+      }
+
+      // --------------------------------------------------------
+      // Registration successful
+      // --------------------------------------------------------
+
+      setSuccess(
+        data.message ||
+          "Account created successfully. You can now log in."
+      );
+
+      setPassword("");
+      setConfirmPassword("");
+
+      // Keep the registered email in the login form.
+      // Clear personal registration fields.
+      setFullName("");
+      setPhone("");
+
+      // Switch back to login after registration.
+      setIsRegistering(false);
+    } catch (error) {
+      console.error(
+        "Registration error:",
+        error
+      );
+
+      setError(
+        "Unable to connect to the registration server."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ============================================================
+  // LOGIN
+  // ============================================================
+
+  async function handleLogin(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     setError("");
@@ -26,95 +203,180 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // ============================================================
+      // ========================================================
       // 1. Login through our authentication API
-      // ============================================================
+      // ========================================================
 
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
-      });
+      const response =
+        await fetch(
+          "/api/auth/login",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              email,
+              password,
+            }),
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       // Login failed
-      if (!response.ok || !data.success) {
-        setError(data.error || "Authentication failed.");
-        return;
-      }
-
-      // ============================================================
-      // 2. Verify the authenticated session
-      // ============================================================
-
-      const meResponse = await fetch("/api/auth/me", {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      const meData = await meResponse.json();
-
-      if (!meResponse.ok || !meData.success) {
+      if (
+        !response.ok ||
+        !data.success
+      ) {
         setError(
-          meData.error || "Unable to load authenticated user profile."
+          data.error ||
+            "Authentication failed."
         );
+
         return;
       }
 
-      // ============================================================
-      // 3. Get the ACTUAL role from Supabase
-      // ============================================================
+      // ========================================================
+      // 2. Verify the authenticated session
+      // ========================================================
 
-      const actualRole = meData.profile?.role;
+      const meResponse =
+        await fetch(
+          "/api/auth/me",
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+      const meData =
+        await meResponse.json();
+
+      if (
+        !meResponse.ok ||
+        !meData.success
+      ) {
+        setError(
+          meData.error ||
+            "Unable to load authenticated user profile."
+        );
+
+        return;
+      }
+
+      // ========================================================
+      // 3. Get the ACTUAL role from Supabase
+      // ========================================================
+
+      const actualRole =
+        meData.profile?.role;
 
       if (!actualRole) {
-        setError("User role could not be determined.");
+        setError(
+          "User role could not be determined."
+        );
+
         return;
       }
 
-      // ============================================================
-      // 4. Remember terminal preference
-      // ============================================================
+      // ========================================================
+      // 4. Prevent role spoofing
+      // ========================================================
+      //
+      // The role selected on the login page is only a UI
+      // selection. The actual role comes from Supabase.
+      //
+      // This means a customer cannot select ADMIN and become
+      // an administrator.
+      //
+      // ========================================================
 
-      if (remember) {
-        localStorage.setItem("logistics_remember", "true");
-      } else {
-        localStorage.removeItem("logistics_remember");
+      const selectedRole =
+        role === "agent"
+          ? "delivery_agent"
+          : role;
+
+      if (
+        actualRole !== selectedRole
+      ) {
+        setError(
+          `This account is registered as ${actualRole === "delivery_agent"
+            ? "delivery agent"
+            : actualRole
+          }. Please select the correct login type.`
+        );
+
+        return;
       }
 
-      // ============================================================
-      // 5. Redirect according to the role stored in Supabase
-      // ============================================================
+      // ========================================================
+      // 5. Remember terminal preference
+      // ========================================================
+
+      if (remember) {
+        localStorage.setItem(
+          "logistics_remember",
+          "true"
+        );
+      } else {
+        localStorage.removeItem(
+          "logistics_remember"
+        );
+      }
+
+      // ========================================================
+      // 6. Redirect according to the role stored in Supabase
+      // ========================================================
 
       setSuccess(
         `Authentication successful as ${actualRole}. Redirecting...`
       );
 
-      if (actualRole === "delivery_agent") {
-        router.push("/dashboard/agent");
+      if (
+        actualRole ===
+        "delivery_agent"
+      ) {
+        router.push(
+          "/dashboard/agent"
+        );
+
         return;
       }
 
-      if (actualRole === "customer") {
-        router.push("/dashboard/customer");
+      if (
+        actualRole ===
+        "customer"
+      ) {
+        router.push(
+          "/dashboard/customer"
+        );
+
         return;
       }
 
-      if (actualRole === "admin") {
-        router.push("/dashboard/admin");
+      if (
+        actualRole ===
+        "admin"
+      ) {
+        router.push(
+          "/dashboard/admin"
+        );
+
         return;
       }
 
       // Unknown role
-      setError(`Unknown user role: ${actualRole}`);
+      setError(
+        `Unknown user role: ${actualRole}`
+      );
     } catch (error) {
-      console.error("Login error:", error);
+      console.error(
+        "Login error:",
+        error
+      );
 
       setError(
         "Unable to connect to the authentication server."
@@ -123,6 +385,35 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  // ============================================================
+  // SWITCH LOGIN / REGISTRATION
+  // ============================================================
+
+  function openRegistration() {
+    setRole("customer");
+    setIsRegistering(true);
+
+    setError("");
+    setSuccess("");
+
+    setPassword("");
+    setConfirmPassword("");
+  }
+
+  function openLogin() {
+    setIsRegistering(false);
+
+    setError("");
+    setSuccess("");
+
+    setPassword("");
+    setConfirmPassword("");
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
 
   return (
     <main className="login-page">
@@ -141,12 +432,20 @@ export default function Home() {
 
           <div className="branding">
             <div className="logo-box">
-              <span className="shipping-icon">🚚</span>
+              <span className="shipping-icon">
+                🚚
+              </span>
             </div>
 
-            <h1>LogisticsPro</h1>
+            <h1>
+              LogisticsPro
+            </h1>
 
-            <p>Secure Terminal Access</p>
+            <p>
+              {isRegistering
+                ? "Create Customer Account"
+                : "Secure Terminal Access"}
+            </p>
           </div>
 
           {/* ======================================================
@@ -159,7 +458,12 @@ export default function Home() {
               className="role-indicator"
               style={{
                 transform: `translateX(${
-                  ["admin", "agent", "customer"].indexOf(role) * 100
+                  [
+                    "admin",
+                    "agent",
+                    "customer",
+                  ].indexOf(role) *
+                  100
                 }%)`,
               }}
             />
@@ -167,9 +471,18 @@ export default function Home() {
             <button
               type="button"
               className={`role-button ${
-                role === "admin" ? "active" : ""
+                role === "admin"
+                  ? "active"
+                  : ""
               }`}
-              onClick={() => setRole("admin")}
+              onClick={() =>
+                handleRoleChange(
+                  "admin"
+                )
+              }
+              disabled={
+                isRegistering
+              }
             >
               ADMIN
             </button>
@@ -177,9 +490,18 @@ export default function Home() {
             <button
               type="button"
               className={`role-button ${
-                role === "agent" ? "active" : ""
+                role === "agent"
+                  ? "active"
+                  : ""
               }`}
-              onClick={() => setRole("agent")}
+              onClick={() =>
+                handleRoleChange(
+                  "agent"
+                )
+              }
+              disabled={
+                isRegistering
+              }
             >
               AGENT
             </button>
@@ -187,177 +509,502 @@ export default function Home() {
             <button
               type="button"
               className={`role-button ${
-                role === "customer" ? "active" : ""
+                role === "customer"
+                  ? "active"
+                  : ""
               }`}
-              onClick={() => setRole("customer")}
+              onClick={() =>
+                handleRoleChange(
+                  "customer"
+                )
+              }
             >
               CLIENT
             </button>
           </div>
 
           {/* ======================================================
-              Login Form
+              Registration Form
           ====================================================== */}
 
-          <form
-            className="login-form"
-            onSubmit={handleSubmit}
-          >
+          {isRegistering ? (
+            <form
+              className="login-form"
+              onSubmit={
+                handleRegister
+              }
+            >
 
-            {/* Email */}
-            <div className="field-group">
-              <label htmlFor="email">
-                Operator ID / Email
-              </label>
+              {/* Full Name */}
+              <div className="field-group">
+                <label htmlFor="fullName">
+                  Full Name
+                </label>
 
-              <div className="input-wrapper">
-                <span className="input-icon">◉</span>
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◉
+                  </span>
 
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) =>
-                    setEmail(event.target.value)
-                  }
-                  placeholder="user@logisticspro.com"
-                  autoComplete="email"
-                  required
-                />
+                  <input
+                    id="fullName"
+                    type="text"
+                    value={fullName}
+                    onChange={(
+                      event
+                    ) =>
+                      setFullName(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Enter your full name"
+                    autoComplete="name"
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* Password */}
-            <div className="field-group">
-              <label htmlFor="password">
-                Security Key
-              </label>
+              {/* Email */}
+              <div className="field-group">
+                <label htmlFor="register-email">
+                  Email Address
+                </label>
 
-              <div className="input-wrapper">
-                <span className="input-icon">◆</span>
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◉
+                  </span>
 
-                <input
-                  id="password"
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
-                  value={password}
-                  onChange={(event) =>
-                    setPassword(event.target.value)
-                  }
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  required
-                />
+                  <input
+                    id="register-email"
+                    type="email"
+                    value={email}
+                    onChange={(
+                      event
+                    ) =>
+                      setEmail(
+                        event.target.value
+                      )
+                    }
+                    placeholder="customer@example.com"
+                    autoComplete="email"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Phone */}
+              <div className="field-group">
+                <label htmlFor="phone">
+                  Phone Number
+                </label>
+
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ☎
+                  </span>
+
+                  <input
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(
+                      event
+                    ) =>
+                      setPhone(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Enter your phone number"
+                    autoComplete="tel"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="field-group">
+                <label htmlFor="register-password">
+                  Password
+                </label>
+
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◆
+                  </span>
+
+                  <input
+                    id="register-password"
+                    type={
+                      showPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={password}
+                    onChange={(
+                      event
+                    ) =>
+                      setPassword(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Create a password"
+                    autoComplete="new-password"
+                    required
+                  />
+
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    onClick={() =>
+                      setShowPassword(
+                        (value) =>
+                          !value
+                      )
+                    }
+                    aria-label={
+                      showPassword
+                        ? "Hide password"
+                        : "Show password"
+                    }
+                  >
+                    {showPassword
+                      ? "◉"
+                      : "◌"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Confirm Password */}
+              <div className="field-group">
+                <label htmlFor="confirm-password">
+                  Confirm Password
+                </label>
+
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◆
+                  </span>
+
+                  <input
+                    id="confirm-password"
+                    type={
+                      showConfirmPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={
+                      confirmPassword
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setConfirmPassword(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Confirm your password"
+                    autoComplete="new-password"
+                    required
+                  />
+
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    onClick={() =>
+                      setShowConfirmPassword(
+                        (value) =>
+                          !value
+                      )
+                    }
+                    aria-label={
+                      showConfirmPassword
+                        ? "Hide confirm password"
+                        : "Show confirm password"
+                    }
+                  >
+                    {showConfirmPassword
+                      ? "◉"
+                      : "◌"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="message error-message">
+                  <strong>
+                    Registration Failed
+                  </strong>
+
+                  <span>
+                    {error}
+                  </span>
+                </div>
+              )}
+
+              {/* Success Message */}
+              {success && (
+                <div className="message success-message">
+                  <strong>
+                    Registration Successful
+                  </strong>
+
+                  <span>
+                    {success}
+                  </span>
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                type="submit"
+                className="authenticate-button"
+                disabled={
+                  loading
+                }
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner" />
+                    Creating Account...
+                  </>
+                ) : (
+                  <>
+                    Create Customer Account
+                    <span className="arrow">
+                      →
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Back to Login */}
+              <div className="options-row">
+                <span>
+                  Already have an account?
+                </span>
 
                 <button
                   type="button"
-                  className="password-toggle"
-                  onClick={() =>
-                    setShowPassword(
-                      (value) => !value
-                    )
-                  }
-                  aria-label={
-                    showPassword
-                      ? "Hide password"
-                      : "Show password"
+                  className="recover-button"
+                  onClick={
+                    openLogin
                   }
                 >
-                  {showPassword ? "◉" : "◌"}
+                  Sign In
                 </button>
               </div>
-            </div>
+            </form>
+          ) : (
+            /* ====================================================
+               Login Form
+            ==================================================== */
 
-            {/* ==================================================
-                Error Message
-            ================================================== */}
-
-            {error && (
-              <div className="message error-message">
-                <strong>
-                  Authentication Failed
-                </strong>
-
-                <span>{error}</span>
-              </div>
-            )}
-
-            {/* ==================================================
-                Success Message
-            ================================================== */}
-
-            {success && (
-              <div className="message success-message">
-                <strong>
-                  Authentication Successful
-                </strong>
-
-                <span>{success}</span>
-              </div>
-            )}
-
-            {/* ==================================================
-                Options
-            ================================================== */}
-
-            <div className="options-row">
-
-              <label className="remember-option">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(event) =>
-                    setRemember(
-                      event.target.checked
-                    )
-                  }
-                />
-
-                <span>
-                  Remember terminal
-                </span>
-              </label>
-
-              <button
-                type="button"
-                className="recover-button"
-                onClick={() => {
-                  setError(
-                    "Access recovery will be implemented in a later step."
-                  );
-                }}
-              >
-                Recover Access
-              </button>
-            </div>
-
-            {/* ==================================================
-                Submit Button
-            ================================================== */}
-
-            <button
-              type="submit"
-              className="authenticate-button"
-              disabled={loading}
+            <form
+              className="login-form"
+              onSubmit={
+                handleLogin
+              }
             >
-              {loading ? (
-                <>
-                  <span className="spinner" />
-                  Authenticating...
-                </>
-              ) : (
-                <>
-                  Authenticate
-                  <span className="arrow">
-                    →
+
+              {/* Email */}
+              <div className="field-group">
+                <label htmlFor="email">
+                  Operator ID / Email
+                </label>
+
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◉
                   </span>
-                </>
+
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(
+                      event
+                    ) =>
+                      setEmail(
+                        event.target.value
+                      )
+                    }
+                    placeholder="user@logisticspro.com"
+                    autoComplete="email"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="field-group">
+                <label htmlFor="password">
+                  Security Key
+                </label>
+
+                <div className="input-wrapper">
+                  <span className="input-icon">
+                    ◆
+                  </span>
+
+                  <input
+                    id="password"
+                    type={
+                      showPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={password}
+                    onChange={(
+                      event
+                    ) =>
+                      setPassword(
+                        event.target.value
+                      )
+                    }
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    required
+                  />
+
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    onClick={() =>
+                      setShowPassword(
+                        (value) =>
+                          !value
+                      )
+                    }
+                    aria-label={
+                      showPassword
+                        ? "Hide password"
+                        : "Show password"
+                    }
+                  >
+                    {showPassword
+                      ? "◉"
+                      : "◌"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="message error-message">
+                  <strong>
+                    Authentication Failed
+                  </strong>
+
+                  <span>
+                    {error}
+                  </span>
+                </div>
               )}
-            </button>
-          </form>
+
+              {/* Success Message */}
+              {success && (
+                <div className="message success-message">
+                  <strong>
+                    Authentication Successful
+                  </strong>
+
+                  <span>
+                    {success}
+                  </span>
+                </div>
+              )}
+
+              {/* Options */}
+              <div className="options-row">
+
+                <label className="remember-option">
+                  <input
+                    type="checkbox"
+                    checked={
+                      remember
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setRemember(
+                        event.target
+                          .checked
+                      )
+                    }
+                  />
+
+                  <span>
+                    Remember terminal
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  className="recover-button"
+                  onClick={() => {
+                    setError(
+                      "Access recovery will be implemented in a later step."
+                    );
+                  }}
+                >
+                  Recover Access
+                </button>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                className="authenticate-button"
+                disabled={
+                  loading
+                }
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner" />
+                    Authenticating...
+                  </>
+                ) : (
+                  <>
+                    Authenticate
+                    <span className="arrow">
+                      →
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Customer Registration */}
+              {role ===
+                "customer" && (
+                <div
+                  className="options-row"
+                  style={{
+                    justifyContent:
+                      "center",
+                    marginTop:
+                      "12px",
+                  }}
+                >
+                  <span>
+                    New customer?
+                  </span>
+
+                  <button
+                    type="button"
+                    className="recover-button"
+                    onClick={
+                      openRegistration
+                    }
+                  >
+                    Create Account
+                  </button>
+                </div>
+              )}
+            </form>
+          )}
 
           {/* ======================================================
               Footer
