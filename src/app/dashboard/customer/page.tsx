@@ -359,7 +359,9 @@ export default function CustomerDashboard() {
           </button>
 
           <button
-            className="flex w-full items-center gap-4 border-r-4 border-[#0058be] bg-[#dce9ff] px-6 py-3 text-left font-semibold text-[#0058be]"
+            type="button"
+            onClick={() => router.push("/dashboard/customer/orders/create")}
+            className="flex w-full items-center gap-4 px-6 py-3 text-left text-[#45464d] transition hover:bg-[#e5eeff]"
           >
             <span className="text-lg">
               🚚
