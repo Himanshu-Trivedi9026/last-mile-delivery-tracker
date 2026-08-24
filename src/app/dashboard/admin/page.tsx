@@ -403,7 +403,7 @@ const [orders, setOrders] = useState<Order[]>([]);
 
             <div className="mt-6">
               <Link
-                href="/dashboard/customer/orders/create"
+                href="/dashboard/admin/orders/create"
                 className="flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800"
               >
                 <span>＋</span>
