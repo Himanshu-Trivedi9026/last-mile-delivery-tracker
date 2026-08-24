@@ -588,6 +588,75 @@ export async function GET(
 // legitimate customer rescheduling.
 // ============================================================
 
+
+// ============================================================
+// RELEASE AGENT WHEN NO ACTIVE DELIVERIES REMAIN
+// ============================================================
+//
+// An agent is marked unavailable when an order is assigned.
+// Once that order finishes/fails/is rescheduled, the agent should
+// become available again ONLY if they have no other active orders.
+// ============================================================
+
+async function releaseAgentIfNoActiveOrders(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  agentId: string | null
+) {
+  if (!agentId) {
+    return;
+  }
+
+  const { data: activeOrders, error } =
+    await adminSupabase
+      .from("orders")
+      .select("id")
+      .eq("assigned_agent_id", agentId)
+      .in("status", [
+        "assigned",
+        "picked_up",
+        "in_transit",
+        "out_for_delivery",
+      ])
+      .limit(1);
+
+  if (error) {
+    console.error(
+      "Active order check for agent availability failed:",
+      error
+    );
+    return;
+  }
+
+  if (activeOrders && activeOrders.length > 0) {
+    console.log(
+      `Agent ${agentId} still has an active delivery. Keeping unavailable.`
+    );
+    return;
+  }
+
+  const { error: updateError } =
+    await adminSupabase
+      .from("profiles")
+      .update({
+        is_available: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", agentId)
+      .eq("role", "delivery_agent");
+
+  if (updateError) {
+    console.error(
+      "Failed to release delivery agent:",
+      updateError
+    );
+    return;
+  }
+
+  console.log(
+    `Agent ${agentId} is now available for assignment.`
+  );
+}
+
 export async function POST(
   request: Request,
   { params }: RouteContext
@@ -1410,6 +1479,71 @@ export async function POST(
         { status: 500 }
       );
     }
+
+    // ========================================================
+    // 16. RELEASE AGENT AVAILABILITY
+    // ========================================================
+    //
+    // Assignment marks an agent unavailable.
+    //
+    // When a delivery is completed, failed, cancelled, or
+    // rescheduled, release the previous agent if they have
+    // no other active deliveries.
+    //
+    // For rescheduling:
+    //   old agent -> available
+    //   new agent -> unavailable
+    // ========================================================
+
+    const previousAgentId =
+      order.assigned_agent_id ?? null;
+
+    const isAgentReleasedStatus =
+      requestedStatus === "delivered" ||
+      requestedStatus === "failed" ||
+      requestedStatus === "cancelled" ||
+      isRescheduling;
+
+    if (
+      isAgentReleasedStatus &&
+      previousAgentId
+    ) {
+      await releaseAgentIfNoActiveOrders(
+        adminSupabase,
+        previousAgentId
+      );
+    }
+
+    // --------------------------------------------------------
+    // Make the newly assigned rescheduled agent unavailable.
+    // --------------------------------------------------------
+
+    if (
+      isRescheduling &&
+      newAgent?.id
+    ) {
+      const {
+        error: newAgentAvailabilityError,
+      } = await adminSupabase
+        .from("profiles")
+        .update({
+          is_available: false,
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq("id", newAgent.id)
+        .eq("role", "delivery_agent");
+
+      if (newAgentAvailabilityError) {
+        console.error(
+          "Failed to mark newly assigned agent unavailable:",
+          newAgentAvailabilityError
+        );
+      }
+    }
+
+
+
 
     // ========================================================
     // 16. SEND CUSTOMER EMAIL NOTIFICATION

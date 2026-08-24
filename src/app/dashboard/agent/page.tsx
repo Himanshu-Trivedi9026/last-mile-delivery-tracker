@@ -450,6 +450,47 @@ function SvgIcon({
   }
 }
 
+
+async function updateAgentLocation() {
+  try {
+    const gps = await getCurrentGPSPosition();
+
+    if (!gps) {
+      return;
+    }
+
+    const response = await fetch(
+      "/api/agent/location",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          latitude: gps.latitude,
+          longitude: gps.longitude,
+          accuracy: gps.accuracy,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      console.warn(
+        "Agent location update failed:",
+        data.error || "Unknown error"
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "Agent location update error:",
+      error
+    );
+  }
+}
+
 export default function AgentDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [profile, setProfile] =
@@ -477,7 +518,38 @@ export default function AgentDashboard() {
   /*
    * Load dashboard
    */
+
+  // ============================================================
+  // AUTOMATIC AGENT GPS LOCATION SYNC
+  // ============================================================
+
   useEffect(() => {
+    let mounted = true;
+
+    async function syncLocation() {
+      if (!mounted) {
+        return;
+      }
+
+      await updateAgentLocation();
+    }
+
+    // Send the current location immediately.
+    syncLocation();
+
+    // Keep the agent's GPS location fresh.
+    const intervalId = window.setInterval(
+      syncLocation,
+      30_000
+    );
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+useEffect(() => {
     async function loadDashboard() {
       try {
         setLoading(true);

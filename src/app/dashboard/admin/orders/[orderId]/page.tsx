@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 // ============================================================
 // TYPES
@@ -210,6 +211,8 @@ export default function AdminOrderDetailsPage({
 }: {
   params: Promise<{ orderId: string }>;
 }) {
+  const router = useRouter();
+
   const [order, setOrder] =
     useState<Order | null>(null);
 
@@ -230,6 +233,19 @@ export default function AdminOrderDetailsPage({
     useState(false);
 
   const [agentError, setAgentError] =
+    useState("");
+
+  // ==========================================================
+  // AUTO ASSIGNMENT STATE
+  // ==========================================================
+
+  const [assigningAgent, setAssigningAgent] =
+    useState(false);
+
+  const [assignmentMessage, setAssignmentMessage] =
+    useState("");
+
+  const [assignmentError, setAssignmentError] =
     useState("");
 
   // ==========================================================
@@ -548,6 +564,130 @@ export default function AdminOrderDetailsPage({
   // ==========================================================
   // PAGE
   // ==========================================================
+
+  async function handleAutoAssign() {
+    if (!order?.id || assigningAgent) {
+      return;
+    }
+
+    setAssigningAgent(true);
+    setAssignmentMessage("");
+    setAssignmentError("");
+
+    try {
+      const response = await fetch(
+        `/api/orders/${order.id}/assign`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            autoAssign: true,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error ||
+            "Failed to automatically assign a delivery agent."
+        );
+      }
+
+      const method =
+        data.assignment?.method;
+
+      const distance =
+        data.assignment?.distanceKm;
+
+      let message =
+        data.message ||
+        "Delivery agent assigned successfully.";
+
+      if (
+        method === "gps" &&
+        typeof distance === "number"
+      ) {
+        message +=
+          ` Nearest GPS agent selected (${distance.toFixed(2)} km away).`;
+      } else if (method === "zone") {
+        message +=
+          " Agent selected using the delivery zone.";
+      }
+
+      setAssignmentMessage(message);
+
+      /*
+       * Reload the order so assigned_agent_id
+       * changes immediately in the UI.
+       */
+      const orderResponse = await fetch(
+        `/api/orders/${order.id}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const orderData =
+        await orderResponse.json();
+
+      if (
+        orderResponse.ok &&
+        orderData.success &&
+        orderData.order
+      ) {
+        setOrder(orderData.order);
+
+        /*
+         * Load the newly assigned agent.
+         */
+        if (
+          orderData.order.assigned_agent_id
+        ) {
+          setAgentLoading(true);
+
+          const agentResponse =
+            await fetch(
+              `/api/admin/agents/${orderData.order.assigned_agent_id}`,
+              {
+                cache: "no-store",
+              }
+            );
+
+          const agentData =
+            await agentResponse.json();
+
+          if (
+            agentResponse.ok &&
+            agentData.success &&
+            agentData.agent
+          ) {
+            setAgent(agentData.agent);
+            setAgentError("");
+          }
+        }
+      }
+
+      router.refresh();
+    } catch (error) {
+      console.error(
+        "Auto assignment error:",
+        error
+      );
+
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Failed to automatically assign a delivery agent."
+      );
+    } finally {
+      setAgentLoading(false);
+      setAssigningAgent(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-gray-50 p-6 md:p-8">
@@ -892,6 +1032,50 @@ export default function AdminOrderDetailsPage({
                 <p className="mt-1 text-xs text-yellow-700">
                   An available delivery agent can be assigned during order processing.
                 </p>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+
+                  <button
+                    type="button"
+                    onClick={handleAutoAssign}
+                    disabled={assigningAgent}
+                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {assigningAgent ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        Assigning...
+                      </>
+                    ) : (
+                      <>
+                        📍
+                        Auto Assign Nearest Agent
+                      </>
+                    )}
+                  </button>
+
+                </div>
+
+                {assignmentMessage && (
+                  <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3">
+                    <p className="text-sm font-semibold text-green-800">
+                      {assignmentMessage}
+                    </p>
+                  </div>
+                )}
+
+                {assignmentError && (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-semibold text-red-800">
+                      Auto assignment failed
+                    </p>
+
+                    <p className="mt-1 text-xs text-red-700">
+                      {assignmentError}
+                    </p>
+                  </div>
+                )}
+
               </div>
 
             ) : agentLoading ? (

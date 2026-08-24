@@ -2,39 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// ============================================================
-// POST /api/orders/[orderId]/assign
-//
-// Supported:
-// 1. Admin can manually assign an order to any delivery agent.
-// 2. Admin can automatically assign an order to the nearest
-//    available delivery agent.
-// 3. Delivery agent can claim an unassigned pending order
-//    for themselves.
-//
-// Manual admin:
-// {
-//   "agentId": "delivery-agent-user-id"
-// }
-//
-// Automatic admin:
-// {
-//   "autoAssign": true
-// }
-//
-// Delivery agent:
-// {
-//   "agentId": "their-own-user-id"
-// }
-//
-// If agentId is omitted, an authenticated delivery agent
-// automatically assigns the order to themselves.
-// ============================================================
-
-// ============================================================
-// TYPES
-// ============================================================
-
 type Agent = {
   id: string;
   full_name: string | null;
@@ -45,21 +12,6 @@ type Agent = {
   current_longitude: number | null;
 };
 
-type AssignmentResult = {
-  agent: Agent;
-  distanceKm: number | null;
-  method: "gps" | "zone" | "manual";
-};
-
-// ============================================================
-// HAVERSINE DISTANCE
-// ============================================================
-//
-// Calculates the great-circle distance between two GPS points.
-//
-// Returns distance in kilometers.
-// ============================================================
-
 function calculateDistanceKm(
   latitude1: number,
   longitude1: number,
@@ -68,19 +20,14 @@ function calculateDistanceKm(
 ): number {
   const earthRadiusKm = 6371;
 
-  const lat1 =
-    (latitude1 * Math.PI) / 180;
-
-  const lat2 =
-    (latitude2 * Math.PI) / 180;
+  const lat1 = (latitude1 * Math.PI) / 180;
+  const lat2 = (latitude2 * Math.PI) / 180;
 
   const deltaLatitude =
-    ((latitude2 - latitude1) * Math.PI) /
-    180;
+    ((latitude2 - latitude1) * Math.PI) / 180;
 
   const deltaLongitude =
-    ((longitude2 - longitude1) * Math.PI) /
-    180;
+    ((longitude2 - longitude1) * Math.PI) / 180;
 
   const a =
     Math.sin(deltaLatitude / 2) ** 2 +
@@ -98,34 +45,68 @@ function calculateDistanceKm(
   return earthRadiusKm * c;
 }
 
-// ============================================================
-// FIND NEAREST AVAILABLE AGENT
-// ============================================================
-//
-// Priority:
-//
-// 1. Available agents with valid GPS coordinates
-//    -> choose nearest to delivery destination.
-//
-// 2. If GPS cannot be used:
-//    -> prefer available agents in the delivery zone.
-//
-// 3. If no same-zone agent exists:
-//    -> use the first available agent.
-//
-// ============================================================
+async function requireAuthenticatedUser() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return {
+      supabase,
+      user: null,
+      profile: null,
+      error: NextResponse.json(
+        {
+          success: false,
+          error: "Not authenticated.",
+        },
+        { status: 401 }
+      ),
+    };
+  }
+
+  const { data: profile, error: profileError } =
+    await supabase
+      .from("profiles")
+      .select("id, role, full_name")
+      .eq("id", user.id)
+      .single();
+
+  if (profileError || !profile) {
+    return {
+      supabase,
+      user,
+      profile: null,
+      error: NextResponse.json(
+        {
+          success: false,
+          error: "User profile could not be loaded.",
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    supabase,
+    user,
+    profile,
+    error: null,
+  };
+}
 
 async function findNearestAvailableAgent(
-  adminSupabase: ReturnType<
-    typeof createAdminClient
-  >,
+  adminSupabase: ReturnType<typeof createAdminClient>,
   deliveryLatitude: number | null,
   deliveryLongitude: number | null,
   deliveryZoneId: string | null
-): Promise<AssignmentResult | null> {
+) {
   const {
     data: agents,
-    error: agentsError,
+    error,
   } = await adminSupabase
     .from("profiles")
     .select(
@@ -142,10 +123,10 @@ async function findNearestAvailableAgent(
     .eq("role", "delivery_agent")
     .eq("is_available", true);
 
-  if (agentsError) {
+  if (error) {
     console.error(
-      "Available delivery-agent lookup error:",
-      agentsError
+      "Available agent lookup error:",
+      error
     );
 
     throw new Error(
@@ -157,98 +138,78 @@ async function findNearestAvailableAgent(
     return null;
   }
 
-  // ==========================================================
-  // GPS-BASED NEAREST AGENT
-  // ==========================================================
+  // ----------------------------------------------------------
+  // 1. NEAREST GPS AGENT
+  // ----------------------------------------------------------
 
   if (
     deliveryLatitude !== null &&
     deliveryLongitude !== null
   ) {
-    const agentsWithGps = agents
+    const gpsAgents = agents
       .filter(
         (agent) =>
           agent.current_latitude !== null &&
           agent.current_longitude !== null &&
           Number.isFinite(
-            agent.current_latitude
+            Number(agent.current_latitude)
           ) &&
           Number.isFinite(
-            agent.current_longitude
+            Number(agent.current_longitude)
           )
       )
-      .map((agent) => {
-        const agentLatitude =
-          agent.current_latitude as number;
-
-        const agentLongitude =
-          agent.current_longitude as number;
-
-        const distanceKm =
-          calculateDistanceKm(
-            deliveryLatitude,
-            deliveryLongitude,
-            agentLatitude,
-            agentLongitude
-          );
-
-        return {
-          agent,
-          distanceKm,
-        };
-      })
+      .map((agent) => ({
+        agent,
+        distanceKm: calculateDistanceKm(
+          Number(deliveryLatitude),
+          Number(deliveryLongitude),
+          Number(agent.current_latitude),
+          Number(agent.current_longitude)
+        ),
+      }))
       .sort(
         (a, b) =>
-          a.distanceKm -
-          b.distanceKm
+          a.distanceKm - b.distanceKm
       );
 
-    if (agentsWithGps.length > 0) {
+    if (gpsAgents.length > 0) {
       return {
-        agent:
-          agentsWithGps[0].agent,
-        distanceKm:
-          agentsWithGps[0].distanceKm,
-        method: "gps",
+        agent: gpsAgents[0].agent,
+        distanceKm: gpsAgents[0].distanceKm,
+        method: "gps" as const,
       };
     }
   }
 
-  // ==========================================================
-  // ZONE FALLBACK
-  // ==========================================================
+  // ----------------------------------------------------------
+  // 2. SAME-ZONE FALLBACK
+  // ----------------------------------------------------------
 
   if (deliveryZoneId) {
-    const sameZoneAgent =
-      agents.find(
-        (agent) =>
-          agent.zone_id ===
-          deliveryZoneId
-      );
+    const sameZoneAgent = agents.find(
+      (agent) =>
+        agent.zone_id === deliveryZoneId
+    );
 
     if (sameZoneAgent) {
       return {
         agent: sameZoneAgent,
         distanceKm: null,
-        method: "zone",
+        method: "zone" as const,
       };
     }
   }
 
-  // ==========================================================
-  // GENERAL AVAILABLE-AGENT FALLBACK
-  // ==========================================================
+  // ----------------------------------------------------------
+  // 3. ANY AVAILABLE AGENT FALLBACK
+  // ----------------------------------------------------------
 
   return {
     agent: agents[0],
     distanceKm: null,
-    method: "zone",
+    method: "fallback" as const,
   };
 }
-
-// ============================================================
-// POST
-// ============================================================
 
 export async function POST(
   request: Request,
@@ -261,92 +222,51 @@ export async function POST(
   }
 ) {
   try {
-    // ==========================================================
-    // 1. AUTHENTICATE USER
-    // ==========================================================
-
-    const supabase =
-      await createClient();
-
-    const {
-      data: { user },
-      error: userError,
-    } =
-      await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Not authenticated.",
-        },
-        { status: 401 }
-      );
-    }
-
-    // ==========================================================
-    // 2. GET ORDER ID
-    // ==========================================================
-
-    const { orderId } =
-      await params;
+    const { orderId } = await params;
 
     if (!orderId) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Order ID is required.",
+          error: "Order ID is required.",
         },
         { status: 400 }
       );
     }
 
-    // ==========================================================
-    // 3. GET CURRENT USER PROFILE
-    // ==========================================================
+    const auth =
+      await requireAuthenticatedUser();
 
-    const {
-      data: currentProfile,
-      error: currentProfileError,
-    } = await supabase
-      .from("profiles")
-      .select("id, role")
-      .eq("id", user.id)
-      .single();
-
-    if (
-      currentProfileError ||
-      !currentProfile
-    ) {
-      console.error(
-        "Current profile lookup error:",
-        currentProfileError
-      );
-
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "User profile could not be loaded.",
-        },
-        { status: 500 }
-      );
+    if (auth.error) {
+      return auth.error;
     }
 
-    // ==========================================================
-    // 4. ONLY ADMIN AND DELIVERY AGENTS
-    // ==========================================================
+    const {
+      user,
+      profile,
+    } = auth;
 
-    const allowedRoles = [
-      "admin",
-      "delivery_agent",
-    ];
+    const body = await request.json().catch(
+      () => ({})
+    );
+
+    const requestedAgentId =
+      typeof body.agentId === "string"
+        ? body.agentId.trim()
+        : "";
+
+    const autoAssign =
+      body.autoAssign === true;
+
+    const isAdmin =
+      profile.role === "admin";
+
+    const isDeliveryAgent =
+      profile.role === "delivery_agent";
 
     if (
-      !allowedRoles.includes(
-        currentProfile.role
-      )
+      !isAdmin &&
+      !isDeliveryAgent
     ) {
       return NextResponse.json(
         {
@@ -358,53 +278,29 @@ export async function POST(
       );
     }
 
-    // ==========================================================
-    // 5. READ REQUEST BODY
-    // ==========================================================
+    const adminSupabase =
+      createAdminClient();
 
-    let body: {
-      agentId?: string;
-      autoAssign?: boolean;
-    } = {};
-
-    try {
-      body = await request.json();
-    } catch {
-      // Empty body is allowed for delivery agents.
-      body = {};
-    }
-
-    const autoAssign =
-      body.autoAssign === true;
-
-    // ==========================================================
-    // AUTO ASSIGNMENT MUST BE ADMIN ONLY
-    // ==========================================================
-
-    if (
-      autoAssign &&
-      currentProfile.role !== "admin"
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Only administrators can use automatic agent assignment.",
-        },
-        { status: 403 }
-      );
-    }
-
-    // ==========================================================
-    // 6. GET ORDER
-    // ==========================================================
+    // --------------------------------------------------------
+    // LOAD ORDER
+    // --------------------------------------------------------
 
     const {
       data: order,
       error: orderError,
-    } = await supabase
+    } = await adminSupabase
       .from("orders")
-      .select("*")
+      .select(
+        `
+          id,
+          order_number,
+          status,
+          assigned_agent_id,
+          delivery_zone_id,
+          delivery_latitude,
+          delivery_longitude
+        `
+      )
       .eq("id", orderId)
       .single();
 
@@ -423,444 +319,357 @@ export async function POST(
       );
     }
 
-    // ==========================================================
-    // 7. VERIFY ORDER STATUS
-    // ==========================================================
+    // --------------------------------------------------------
+    // DON'T ASSIGN ALREADY DELIVERED/CANCELLED ORDERS
+    // --------------------------------------------------------
 
-    if (order.status !== "pending") {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Order cannot be assigned because its current status is "${order.status}".`,
-        },
-        { status: 409 }
-      );
-    }
-
-    // ==========================================================
-    // 8. VERIFY ORDER IS NOT ALREADY ASSIGNED
-    // ==========================================================
+    const status =
+      String(order.status).toLowerCase();
 
     if (
-      order.assigned_agent_id
+      status === "delivered" ||
+      status === "cancelled"
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "This order is already assigned to a delivery agent.",
+            "This order cannot be assigned.",
         },
-        { status: 409 }
+        { status: 400 }
       );
     }
 
-    // ==========================================================
-    // 9. ADMIN AUTO ASSIGN
-    // ==========================================================
+    // --------------------------------------------------------
+    // DETERMINE AGENT
+    // --------------------------------------------------------
 
-    let targetAgentId:
-      | string
-      | undefined;
+    let selectedAgent: Agent | null =
+      null;
+
+    let distanceKm: number | null =
+      null;
 
     let assignmentMethod:
       | "gps"
       | "zone"
-      | "manual" = "manual";
+      | "manual"
+      | "fallback" = "manual";
 
-    let assignmentDistanceKm:
-      | number
-      | null = null;
+    // --------------------------------------------------------
+    // DELIVERY AGENT CLAIMING ORDER
+    // --------------------------------------------------------
 
-    let selectedAgent:
-      | Agent
-      | null = null;
-
-    if (autoAssign) {
-      const adminSupabase =
-        createAdminClient();
-
-      const deliveryLatitude =
-        order.delivery_latitude != null
-          ? Number(
-              order.delivery_latitude
-            )
-          : null;
-
-      const deliveryLongitude =
-        order.delivery_longitude !=
-        null
-          ? Number(
-              order.delivery_longitude
-            )
-          : null;
-
-      const validDeliveryLatitude =
-        deliveryLatitude !== null &&
-        Number.isFinite(
-          deliveryLatitude
-        ) &&
-        deliveryLatitude >= -90 &&
-        deliveryLatitude <= 90
-          ? deliveryLatitude
-          : null;
-
-      const validDeliveryLongitude =
-        deliveryLongitude !== null &&
-        Number.isFinite(
-          deliveryLongitude
-        ) &&
-        deliveryLongitude >= -180 &&
-        deliveryLongitude <= 180
-          ? deliveryLongitude
-          : null;
-
-      const assignment =
-        await findNearestAvailableAgent(
-          adminSupabase,
-          validDeliveryLatitude,
-          validDeliveryLongitude,
-          order.delivery_zone_id ??
-            null
-        );
-
-      if (!assignment) {
+    if (isDeliveryAgent) {
+      if (
+        requestedAgentId &&
+        requestedAgentId !== user.id
+      ) {
         return NextResponse.json(
           {
             success: false,
             error:
-              "No available delivery agent was found.",
+              "A delivery agent can only assign an order to themselves.",
+          },
+          { status: 403 }
+        );
+      }
+
+      if (
+        order.assigned_agent_id &&
+        order.assigned_agent_id !== user.id
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "This order is already assigned to another agent.",
           },
           { status: 409 }
         );
       }
 
-      selectedAgent =
-        assignment.agent;
-
-      targetAgentId =
-        assignment.agent.id;
-
-      assignmentMethod =
-        assignment.method;
-
-      assignmentDistanceKm =
-        assignment.distanceKm;
-    }
-
-    // ==========================================================
-    // 10. MANUAL / DELIVERY-AGENT ASSIGNMENT
-    // ==========================================================
-
-    if (!autoAssign) {
-      targetAgentId =
-        body.agentId?.trim();
-
-      // Delivery agent without agentId
-      // assigns the order to themselves.
-      if (
-        !targetAgentId &&
-        currentProfile.role ===
-          "delivery_agent"
-      ) {
-        targetAgentId =
-          user.id;
-      }
-
-      if (!targetAgentId) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "agentId is required.",
-          },
-          { status: 400 }
-        );
-      }
-
-      // Delivery agents can only
-      // assign orders to themselves.
-      if (
-        currentProfile.role ===
-          "delivery_agent" &&
-        targetAgentId !== user.id
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Delivery agents can only assign orders to themselves.",
-          },
-          { status: 403 }
-        );
-      }
-    }
-
-    // ==========================================================
-    // 11. GET TARGET AGENT
-    // ==========================================================
-
-    if (!selectedAgent) {
       const {
-        data: targetAgent,
-        error: targetAgentError,
-      } = await supabase
-        .from("profiles")
-        .select(
-          `
-            id,
-            full_name,
-            role,
-            zone_id,
-            is_available,
-            current_latitude,
-            current_longitude
-          `
-        )
-        .eq("id", targetAgentId!)
-        .single();
+        data: ownAgent,
+        error: ownAgentError,
+      } =
+        await adminSupabase
+          .from("profiles")
+          .select(
+            `
+              id,
+              full_name,
+              role,
+              zone_id,
+              is_available,
+              current_latitude,
+              current_longitude
+            `
+          )
+          .eq("id", user.id)
+          .eq(
+            "role",
+            "delivery_agent"
+          )
+          .single();
 
       if (
-        targetAgentError ||
-        !targetAgent
+        ownAgentError ||
+        !ownAgent
       ) {
-        console.error(
-          "Target agent lookup error:",
-          targetAgentError
-        );
-
         return NextResponse.json(
           {
             success: false,
             error:
-              "Delivery agent not found.",
+              "Delivery agent profile not found.",
           },
           { status: 404 }
         );
       }
 
       selectedAgent =
-        targetAgent;
+        ownAgent as Agent;
+
+      assignmentMethod =
+        "manual";
     }
 
-    // ==========================================================
-    // 12. VERIFY TARGET USER IS DELIVERY AGENT
-    // ==========================================================
+    // --------------------------------------------------------
+    // ADMIN MANUAL ASSIGNMENT
+    // --------------------------------------------------------
 
     if (
-      selectedAgent.role !==
-      "delivery_agent"
+      isAdmin &&
+      requestedAgentId &&
+      !autoAssign
     ) {
+      const {
+        data: manualAgent,
+        error: manualAgentError,
+      } =
+        await adminSupabase
+          .from("profiles")
+          .select(
+            `
+              id,
+              full_name,
+              role,
+              zone_id,
+              is_available,
+              current_latitude,
+              current_longitude
+            `
+          )
+          .eq(
+            "id",
+            requestedAgentId
+          )
+          .eq(
+            "role",
+            "delivery_agent"
+          )
+          .single();
+
+      if (
+        manualAgentError ||
+        !manualAgent
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Selected delivery agent was not found.",
+          },
+          { status: 404 }
+        );
+      }
+
+      selectedAgent =
+        manualAgent as Agent;
+
+      assignmentMethod =
+        "manual";
+    }
+
+    // --------------------------------------------------------
+    // ADMIN AUTO ASSIGN
+    // --------------------------------------------------------
+
+    if (
+      isAdmin &&
+      autoAssign
+    ) {
+      const result =
+        await findNearestAvailableAgent(
+          adminSupabase,
+          order.delivery_latitude !==
+            null
+            ? Number(
+                order.delivery_latitude
+              )
+            : null,
+          order.delivery_longitude !==
+            null
+            ? Number(
+                order.delivery_longitude
+              )
+            : null,
+          order.delivery_zone_id ?? null
+        );
+
+      if (!result) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "No available delivery agent found.",
+          },
+          { status: 409 }
+        );
+      }
+
+      selectedAgent =
+        result.agent as Agent;
+
+      distanceKm =
+        result.distanceKm;
+
+      assignmentMethod =
+        result.method;
+    }
+
+    // --------------------------------------------------------
+    // NO AGENT SPECIFIED
+    // --------------------------------------------------------
+
+    if (!selectedAgent) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Selected user is not a delivery agent.",
+            "Provide an agentId or set autoAssign to true.",
         },
         { status: 400 }
       );
     }
 
-    // ==========================================================
-    // 13. VERIFY AVAILABILITY
-    // ==========================================================
-    //
-    // Automatic assignment only considers available agents.
-    //
-    // For manual assignment we preserve the existing behavior
-    // and allow the admin to select an agent manually.
-    // ==========================================================
-
-    if (
-      autoAssign &&
-      !selectedAgent.is_available
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Selected delivery agent is no longer available.",
-        },
-        { status: 409 }
-      );
-    }
-
-    // ==========================================================
-    // 14. ASSIGN ORDER
-    // ==========================================================
+    // --------------------------------------------------------
+    // ASSIGN ORDER
+    // --------------------------------------------------------
 
     const {
       data: updatedOrder,
-      error: updateOrderError,
-    } = await supabase
-      .from("orders")
-      .update({
-        assigned_agent_id:
-          targetAgentId,
-        status: "assigned",
-      })
-      .eq("id", orderId)
-      .eq("status", "pending")
-      .is(
-        "assigned_agent_id",
-        null
-      )
-      .select()
-      .single();
+      error: updateError,
+    } =
+      await adminSupabase
+        .from("orders")
+        .update({
+          assigned_agent_id:
+            selectedAgent.id,
+          status: "assigned",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId)
+        .select()
+        .single();
 
     if (
-      updateOrderError ||
+      updateError ||
       !updatedOrder
     ) {
       console.error(
         "Order assignment update error:",
-        updateOrderError
+        updateError
       );
 
       return NextResponse.json(
         {
           success: false,
           error:
-            "Failed to assign order. It may have already been assigned.",
-        },
-        { status: 409 }
-      );
-    }
-
-    // ==========================================================
-    // 15. CREATE TRACKING EVENT
-    // ==========================================================
-
-    const assignmentDescription =
-      autoAssign
-        ? assignmentMethod ===
-          "gps"
-          ? `Order automatically assigned to nearest available delivery agent (${assignmentDistanceKm?.toFixed(
-              2
-            )} km away).`
-          : assignmentMethod ===
-            "zone"
-          ? "Order automatically assigned to an available delivery agent using zone fallback."
-          : "Order assigned to delivery agent."
-        : "Order assigned to delivery agent.";
-
-    const {
-      data: trackingEvent,
-      error: trackingEventError,
-    } = await supabase
-      .from("tracking_events")
-      .insert({
-        order_id: orderId,
-        status: "assigned",
-        description:
-          assignmentDescription,
-        location:
-          order.pickup_address ??
-          "Bhopal",
-        updated_by: user.id,
-      })
-      .select()
-      .single();
-
-    // ==========================================================
-    // 16. ROLLBACK IF TRACKING EVENT FAILS
-    // ==========================================================
-
-    if (
-      trackingEventError ||
-      !trackingEvent
-    ) {
-      console.error(
-        "Tracking event creation error:",
-        trackingEventError
-      );
-
-      const {
-        error: rollbackError,
-      } = await supabase
-        .from("orders")
-        .update({
-          assigned_agent_id:
-            null,
-          status: "pending",
-        })
-        .eq("id", orderId)
-        .eq(
-          "assigned_agent_id",
-          targetAgentId
-        )
-        .eq(
-          "status",
-          "assigned"
-        );
-
-      if (rollbackError) {
-        console.error(
-          "Assignment rollback error:",
-          rollbackError
-        );
-      }
-
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Order assignment could not be completed because the tracking event could not be created.",
+            "Failed to assign delivery agent.",
+          details:
+            updateError?.message,
         },
         { status: 500 }
       );
     }
 
-    // ==========================================================
-    // 17. SUCCESS
-    // ==========================================================
+    // --------------------------------------------------------
+    // MARK AGENT UNAVAILABLE
+    // --------------------------------------------------------
+
+    const {
+      error: availabilityError,
+    } =
+      await adminSupabase
+        .from("profiles")
+        .update({
+          is_available: false,
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          selectedAgent.id
+        );
+
+    if (availabilityError) {
+      console.error(
+        "Agent availability update error:",
+        availabilityError
+      );
+    }
+
+    // --------------------------------------------------------
+    // TRACKING EVENT
+    // --------------------------------------------------------
+
+    const {
+      error: trackingError,
+    } =
+      await adminSupabase
+        .from("tracking_events")
+        .insert({
+          order_id: orderId,
+          status: "assigned",
+          actor_id: user.id,
+          description:
+            assignmentMethod ===
+            "gps"
+              ? `Automatically assigned to ${selectedAgent.full_name ?? "delivery agent"} using nearest GPS location.`
+              : assignmentMethod ===
+                "zone"
+                ? `Automatically assigned to ${selectedAgent.full_name ?? "delivery agent"} using delivery zone.`
+                : assignmentMethod ===
+                  "fallback"
+                  ? `Automatically assigned to ${selectedAgent.full_name ?? "delivery agent"} using available-agent fallback.`
+                  : `Order assigned to ${selectedAgent.full_name ?? "delivery agent"}.`,
+        });
+
+    if (trackingError) {
+      console.error(
+        "Assignment tracking event error:",
+        trackingError
+      );
+    }
 
     return NextResponse.json(
       {
         success: true,
-
         message:
-          autoAssign
-            ? "Order automatically assigned successfully."
-            : "Order assigned successfully.",
-
-        order:
-          updatedOrder,
-
-        trackingEvent,
-
+          "Delivery agent assigned successfully.",
+        order: updatedOrder,
+        agent: selectedAgent,
         assignment: {
-          method:
-            assignmentMethod,
-
-          agent: {
-            id:
-              selectedAgent.id,
-
-            full_name:
-              selectedAgent.full_name,
-
-            zone_id:
-              selectedAgent.zone_id,
-
-            is_available:
-              selectedAgent.is_available,
-
-            current_latitude:
-              selectedAgent.current_latitude,
-
-            current_longitude:
-              selectedAgent.current_longitude,
-          },
-
-          distance_km:
-            assignmentDistanceKm,
+          method: assignmentMethod,
+          distanceKm,
         },
       },
       { status: 200 }
     );
   } catch (error) {
     console.error(
-      "Order assignment error:",
+      "Assignment API error:",
       error
     );
 
